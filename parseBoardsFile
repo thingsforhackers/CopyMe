@@ -1,0 +1,115 @@
+#!/usr/bin/python
+"""Python script to read Arduino boards.txt file."""
+import sys
+import argparse
+import re
+
+
+class ParseBoardFile(object):
+    """Class the handles parses of Arduino boards.txt file."""
+
+    OP_READ = 'read'
+    OP_DUMP = 'dump'
+    OP_BOARDS = 'boards'
+
+    def __init__(self):
+        """Initialise a few things."""
+        self._boardInfo = {}
+        args = self._parseArgs()
+        self._boardsFile = args.boards_txt
+        if args.dump:
+            self._op = self.OP_DUMP
+        elif args.boards:
+            self._op = self.OP_BOARDS
+        else:
+            self._boardTag = args.boardTag
+            if not self._boardTag:
+                raise Exception('Need to specify a board tag')
+            self._keyName = args.keyName
+            if not self._keyName:
+                raise Exception('Need to specify a key name')
+            self._op = self.OP_READ
+
+    def _parseArgs(self):
+        """Parse command line args."""
+        parser = argparse.ArgumentParser(description='ParseBoardFile:"\
+                                        " parse Arduino boards.txt file')
+        parser.add_argument('--boards_txt',
+                            type=str,
+                            required=True,
+                            help='Path of boards.txt file')
+        parser.add_argument('--dump',
+                            action='store_true',
+                            help='Dump the contents of the boards.txt file')
+        parser.add_argument('--boards',
+                            action='store_true',
+                            help='Dump the boards described in file.')
+        parser.add_argument('boardTag',
+                            nargs='?',
+                            help='Board tag')
+        parser.add_argument('keyName',
+                            nargs='?',
+                            help='Key name')
+
+        return parser.parse_args()
+
+    def _parseBoardFile(self):
+        """Parse board file in to an dict."""
+        _re = re.compile(r'^\s*(\S+?)\.(\S+?)\s*=\s*(.+?)\s*$')
+        for line in open(self._boardsFile):
+            line = line.strip()
+            if line:
+                reResults = _re.match(line)
+                if reResults:
+                    boardTag, keyName, value = reResults.group(1, 2, 3)
+                    board = self._boardInfo.get(boardTag, {})
+                    if not board:
+                        self._boardInfo[boardTag] = board
+                    board[keyName] = value
+
+    def _doBoards(self):
+        """List boards known in file."""
+        tagNameMap = {}
+        longestTagLen = 0
+        for boardTag, boardInfo in self._boardInfo.items():
+            longestTagLen = max(longestTagLen, len(boardTag))
+            tagNameMap[boardTag] = boardInfo.get('name', 'Anonymous')
+        fmtStr = "{0:{width}}{1}"
+        print fmtStr.format('Tag', 'Board Name', width=longestTagLen+2)
+        for tag, name in sorted(tagNameMap.items()):
+            print fmtStr.format(tag, name, width=longestTagLen+2)
+
+    def _doDump(self):
+        """Just dump out the complte database of boards."""
+        print "# {0} contains: ".format(self._boardsFile)
+        for boardName in sorted(self._boardInfo.keys()):
+            print "{0}:".format(boardName)
+            board = self._boardInfo[boardName]
+            for key, value in board.items():
+                print " {0}: {1}".format(key, value)
+
+    def _doRead(self):
+        """Read a key from the baordTag."""
+        boardInfo = self._boardInfo.get(self._boardTag)
+        if not boardInfo:
+            raise Exception('{0} is not a known boardtag'.format(
+                self._boardTag))
+        value = boardInfo.get(self._keyName)
+        if not value:
+            raise Exception('{0} is not a valid key for {1}'.format(
+                self._keyName, self._boardTag))
+        print value
+
+    def run(self):
+        """Start here."""
+        self._parseBoardFile()
+        if self._op == self.OP_DUMP:
+            self._doDump()
+        elif self._op == self.OP_BOARDS:
+            self._doBoards()
+        elif self._op == self.OP_READ:
+            self._doRead()
+        return 0
+
+if __name__ == '__main__':
+    sys.exit(ParseBoardFile().run())
