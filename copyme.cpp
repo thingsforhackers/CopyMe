@@ -15,10 +15,10 @@ static const uint8_t GREEN_BUTTON_PIN = 13;
 
 static const uint8_t SPEAKER_PIN = 3;
 
-static const uint8_t NOTE_G4 = 392; //Blue
-static const uint8_t NOTE_C4 = 277; //Yellow
-static const uint8_t NOTE_A4 = 440; //Red
-static const uint8_t NOTE_G5 = 784; //Green
+static const int NOTE_G4 = 392; //Blue
+static const int NOTE_C4 = 277; //Yellow
+static const int NOTE_A4 = 440; //Red
+static const int NOTE_G5 = 784; //Green
 
 enum BUTTON_IDX
 {
@@ -31,24 +31,42 @@ enum BUTTON_IDX
 };
 ButtonCtx buttons[BUTTON_CNT];
 
+enum INDICATION_ID
+{
+  INDICATE_RED,
+  INDICATE_BLUE,
+  INDICATE_YELLOW,
+  INDICATE_GREEN,
+
+  INDICATE_CNT
+
+};
+
 enum GameState
 {
     GAME_STATE_INVALID,
     GAME_STATE_POR,   //Power on reset
 
-    GAME_STATE_PLAY_SEQUENCE, //Play this levels sequence to the player
+    GAME_STATE_PLAY_SEQUENCE_INIT,
+    GAME_STATE_PLAY_SEQUENCE_INDICATE_STEP,
+    GAME_STATE_PLAY_SEQUENCE_INDICATE_DELAY,
 
     GAME_STATE_CHECK_SEQUENCE, //Player plays back sequence
 
+    GAME_STATE_GAME_OVER
 };
 
 static GameState previousGameState;
 static GameState currentGameState;
 static unsigned long stateEnterTime;
 
-static const uint8_t MAX_LEVEL = 64;
+static const uint8_t MAX_LEVEL = 8;
 static uint8_t sequence[MAX_LEVEL];
 static uint8_t currentLevel;
+
+static const int STEP_DURATION = 333;
+
+static uint8_t currentStep;
 
 void setup()
 {
@@ -76,11 +94,72 @@ void setup()
   previousGameState = GAME_STATE_INVALID;
   currentGameState = GAME_STATE_POR;
   stateEnterTime = millis();
+
+  randomSeed(10);
 }
 
 void generateSequence()
 {
+  for(int idx = 0; idx < MAX_LEVEL; idx++)
+  {
+      sequence[idx] = (uint8_t)(random(0, INDICATE_CNT) & 0xFF);
+  }
+}
 
+static void doIndicateStep(uint8_t step)
+{
+
+  switch(sequence[step])
+  {
+    case INDICATE_RED:
+    {
+      tone(SPEAKER_PIN, NOTE_A4);
+      digitalWrite(RED_LED_PIN, HIGH);
+      break;
+    }
+
+    case INDICATE_BLUE:
+    {
+      tone(SPEAKER_PIN, NOTE_G4);
+      digitalWrite(BLUE_LED_PIN, HIGH);
+      break;
+    }
+
+    case INDICATE_YELLOW:
+    {
+      tone(SPEAKER_PIN, NOTE_C4);
+      digitalWrite(YELLOW_LED_PIN, HIGH);
+      break;
+    }
+
+    case INDICATE_GREEN:
+    {
+      tone(SPEAKER_PIN, NOTE_G5);
+      digitalWrite(GREEN_LED_PIN, HIGH);
+      break;
+    }
+  }
+}
+
+static void stepEnd()
+{
+  noTone(SPEAKER_PIN);
+  digitalWrite(RED_LED_PIN, LOW);
+  digitalWrite(GREEN_LED_PIN, LOW);
+  digitalWrite(BLUE_LED_PIN, LOW);
+  digitalWrite(YELLOW_LED_PIN, LOW);
+}
+
+static void doLevel()
+{
+  uint8_t idx = 0;
+  do
+  {
+    doIndicateStep(idx);
+    delay(STEP_DURATION);
+    stepEnd();
+    idx++;
+  } while(idx < currentLevel);
 }
 
 static runGame()
@@ -91,19 +170,79 @@ static runGame()
   {
     case GAME_STATE_POR:
     {
+      currentLevel = 1;
+      generateSequence();
+      nextGameState = GAME_STATE_PLAY_SEQUENCE_INIT;
+      break;
+    }
+
+    case GAME_STATE_PLAY_SEQUENCE_INIT:
+    {
+      Serial.print("Level: ");
+      Serial.println(currentLevel);
+      currentStep = 0;
+      //doLevel();
+      nextGameState = GAME_STATE_PLAY_SEQUENCE_INDICATE_STEP;
+
+      // if(previousGameState != GAME_STATE_PLAY_SEQUENCE)
+      // {
+      //
+      // }
+      // else if( (millis() - stateEnterTime) > STEP_DURATION )
+      // {
+      //   stepEnd();
+      //   nextGameState = GAME_STATE_CHECK_SEQUENCE;
+      // }
 
       break;
     }
 
-    case GAME_STATE_PLAY_SEQUENCE:
+    case GAME_STATE_PLAY_SEQUENCE_INDICATE_STEP:
     {
+      doIndicateStep(currentStep);
+      nextGameState = GAME_STATE_PLAY_SEQUENCE_INDICATE_DELAY;
+      break;
+    }
 
+    case GAME_STATE_PLAY_SEQUENCE_INDICATE_DELAY:
+    {
+      if( (millis() - stateEnterTime) > STEP_DURATION )
+      {
+        stepEnd();
+        currentStep++;
+        if(currentStep >= currentLevel)
+        {
+          nextGameState = GAME_STATE_CHECK_SEQUENCE;
+        }
+        else
+        {
+          nextGameState = GAME_STATE_PLAY_SEQUENCE_INDICATE_STEP;
+        }
+      }
       break;
     }
 
     case GAME_STATE_CHECK_SEQUENCE:
     {
+      if( (millis() - stateEnterTime) > 5 * STEP_DURATION )
+      {
+        currentLevel++;
 
+        if(currentLevel > MAX_LEVEL )
+        {
+          Serial.println("Game Over");
+          nextGameState = GAME_STATE_GAME_OVER;
+        }
+        else
+        {
+          nextGameState = GAME_STATE_PLAY_SEQUENCE_INIT;
+        }
+      }
+      break;
+    }
+
+    case GAME_STATE_GAME_OVER:
+    {
       break;
     }
 
@@ -130,6 +269,7 @@ static runGame()
 void loop() {
   ButtonMgr::update();
 
+  runGame();
   // Serial.println("And ON");
   // digitalWrite(13, HIGH);   // turn the LED on (HIGH is the voltage level)
   // delay(5000);              // wait for a second
