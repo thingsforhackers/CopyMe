@@ -58,6 +58,11 @@ public:
     return current_;
   }
 
+  void resetEnterTime()
+  {
+      enterTime_ = millis();
+  }
+
 private:
   uint8_t current_;
   uint8_t previous_;

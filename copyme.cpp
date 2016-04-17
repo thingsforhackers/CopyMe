@@ -53,14 +53,15 @@ enum GameState
 {
     GAME_STATE_POR,                           //0 - Power on reset
 
-    GAME_STATE_PLAY_SEQUENCE_INIT,            //1
-    GAME_STATE_PLAY_SEQUENCE_INDICATE_STEP,   //2
-    GAME_STATE_PLAY_SEQUENCE_INDICATE_DELAY,  //3
+    GAME_STATE_PRE_GAME,                      //1
+    GAME_STATE_PLAY_SEQUENCE_INIT,            //2
+    GAME_STATE_PLAY_SEQUENCE_INDICATE_STEP,   //3
+    GAME_STATE_PLAY_SEQUENCE_INDICATE_DELAY,  //4
 
-    GAME_STATE_CHECK_SEQUENCE_PAUSE,          //4 - Delay before start
-    GAME_STATE_CHECK_SEQUENCE,                //5 - Player plays back sequence
-    GAME_STATE_CHECK_SEQUENCE_INDICATE,       //6
-    GAME_STATE_GAME_OVER                      //7
+    GAME_STATE_CHECK_SEQUENCE_PAUSE,          //5 - Delay before start
+    GAME_STATE_CHECK_SEQUENCE,                //6 - Player plays back sequence
+    GAME_STATE_CHECK_SEQUENCE_INDICATE,       //7
+    GAME_STATE_GAME_OVER                      //8
   };
 
 static StateM mainSM;
@@ -158,6 +159,15 @@ static void stepEnd()
   digitalWrite(YELLOW_LED_PIN, LOW);
 }
 
+static void indicateFail()
+{
+  tone(SPEAKER_PIN, 150);
+  digitalWrite(RED_LED_PIN, HIGH);
+  digitalWrite(GREEN_LED_PIN, HIGH);
+  digitalWrite(BLUE_LED_PIN, HIGH);
+  digitalWrite(YELLOW_LED_PIN, HIGH);
+}
+
 static void doLevel()
 {
   uint8_t idx = 0;
@@ -208,7 +218,34 @@ static uint8_t mainStateFunc(StateM* sm)
     {
       currentLevel = 1;
       generateSequence();
-      sm->setNext(GAME_STATE_PLAY_SEQUENCE_INIT);
+      sm->setNext(GAME_STATE_PRE_GAME);
+      break;
+    }
+
+    case GAME_STATE_PRE_GAME:
+    {
+      static uint8_t leds = LOW;
+      if(sm->isStateEntered())
+      {
+
+      }
+      else
+      {
+        if(getInput() != NO_KEY)
+        {
+            sm->setNext(GAME_STATE_PLAY_SEQUENCE_INIT);
+            leds = LOW;
+        }
+        else if(sm->getDuration() > 500)
+        {
+          sm->resetEnterTime();
+          leds = leds ? LOW : HIGH;
+        }
+        digitalWrite(RED_LED_PIN, leds);
+        digitalWrite(GREEN_LED_PIN, leds);
+        digitalWrite(BLUE_LED_PIN, leds);
+        digitalWrite(YELLOW_LED_PIN, leds);
+      }
       break;
     }
 
@@ -326,6 +363,15 @@ static uint8_t mainStateFunc(StateM* sm)
 
     case GAME_STATE_GAME_OVER:
     {
+      if(sm->isStateEntered())
+      {
+        indicateFail();
+      }
+      else if(sm->getDuration() > 4000)
+      {
+        stepEnd();
+        sm->setNext(GAME_STATE_POR);
+      }
       break;
     }
 
