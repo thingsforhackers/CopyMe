@@ -20,6 +20,8 @@ static const int NOTE_C4 = 277; //Yellow
 static const int NOTE_A4 = 440; //Red
 static const int NOTE_G5 = 784; //Green
 
+static const int REPEAT_STEP_TO = 5000;
+
 enum BUTTON_IDX
 {
     RED_BUTTON_IDX,
@@ -42,18 +44,21 @@ enum INDICATION_ID
 
 };
 
+static const uint8_t NO_KEY = INDICATE_CNT;
+
 enum GameState
 {
-    GAME_STATE_INVALID,
-    GAME_STATE_POR,   //Power on reset
+    GAME_STATE_INVALID,                        //0
+    GAME_STATE_POR,                            //1 - Power on reset
 
-    GAME_STATE_PLAY_SEQUENCE_INIT,
-    GAME_STATE_PLAY_SEQUENCE_INDICATE_STEP,
-    GAME_STATE_PLAY_SEQUENCE_INDICATE_DELAY,
+    GAME_STATE_PLAY_SEQUENCE_INIT,            //2
+    GAME_STATE_PLAY_SEQUENCE_INDICATE_STEP,   //3
+    GAME_STATE_PLAY_SEQUENCE_INDICATE_DELAY,  //4
 
-    GAME_STATE_CHECK_SEQUENCE, //Player plays back sequence
-
-    GAME_STATE_GAME_OVER
+    GAME_STATE_CHECK_SEQUENCE_PAUSE,          //5 - Delay before start
+    GAME_STATE_CHECK_SEQUENCE,                //6 - Player plays back sequence
+    GAME_STATE_CHECK_SEQUENCE_INDICATE,       //7
+    GAME_STATE_GAME_OVER                      //8
 };
 
 static GameState previousGameState;
@@ -100,9 +105,13 @@ void setup()
 
 void generateSequence()
 {
+  Serial.println("Sequence");
   for(int idx = 0; idx < MAX_LEVEL; idx++)
   {
-      sequence[idx] = (uint8_t)(random(0, INDICATE_CNT) & 0xFF);
+    sequence[idx] = (uint8_t)(random(0, INDICATE_CNT) & 0xFF);
+    Serial.print(idx);
+    Serial.print(" ");
+    Serial.println(sequence[idx]);
   }
 }
 
@@ -162,6 +171,34 @@ static void doLevel()
   } while(idx < currentLevel);
 }
 
+static uint8_t getInput()
+{
+  uint8_t pressed;
+
+  if(!digitalRead(RED_BUTTON_PIN))
+  {
+      pressed = INDICATE_RED;
+  }
+  else if(!digitalRead(BLUE_BUTTON_PIN))
+  {
+      pressed = INDICATE_BLUE;
+  }
+  else if(!digitalRead(YELLOW_BUTTON_PIN))
+  {
+      pressed = INDICATE_YELLOW;
+  }
+  else if(!digitalRead(GREEN_BUTTON_PIN))
+  {
+      pressed = INDICATE_GREEN;
+  }
+  else
+  {
+    pressed = NO_KEY;
+  }
+
+  return pressed;
+}
+
 static runGame()
 {
   GameState nextGameState = GAME_STATE_INVALID;
@@ -178,22 +215,13 @@ static runGame()
 
     case GAME_STATE_PLAY_SEQUENCE_INIT:
     {
-      Serial.print("Level: ");
-      Serial.println(currentLevel);
-      currentStep = 0;
-      //doLevel();
-      nextGameState = GAME_STATE_PLAY_SEQUENCE_INDICATE_STEP;
-
-      // if(previousGameState != GAME_STATE_PLAY_SEQUENCE)
-      // {
-      //
-      // }
-      // else if( (millis() - stateEnterTime) > STEP_DURATION )
-      // {
-      //   stepEnd();
-      //   nextGameState = GAME_STATE_CHECK_SEQUENCE;
-      // }
-
+      if((millis() - stateEnterTime) > 2000)
+      {
+        Serial.print("Level: ");
+        Serial.println(currentLevel);
+        currentStep = 0;
+        nextGameState = GAME_STATE_PLAY_SEQUENCE_INDICATE_STEP;
+      }
       break;
     }
 
@@ -212,30 +240,86 @@ static runGame()
         currentStep++;
         if(currentStep >= currentLevel)
         {
-          nextGameState = GAME_STATE_CHECK_SEQUENCE;
+          //All done, now handle player repeating this level
+          nextGameState = GAME_STATE_CHECK_SEQUENCE_PAUSE;
         }
         else
         {
+          //Play next step in this sequence
           nextGameState = GAME_STATE_PLAY_SEQUENCE_INDICATE_STEP;
         }
       }
       break;
     }
 
+    case GAME_STATE_CHECK_SEQUENCE_PAUSE:
+    {
+      if( (millis() - stateEnterTime) > 1000 )
+      {
+        currentStep = 0;
+        nextGameState = GAME_STATE_CHECK_SEQUENCE;
+      }
+      break;
+    }
+
     case GAME_STATE_CHECK_SEQUENCE:
     {
-      if( (millis() - stateEnterTime) > 5 * STEP_DURATION )
+      if( (millis() - stateEnterTime) > REPEAT_STEP_TO )
       {
-        currentLevel++;
+        Serial.println("Too slow!!!");
+        nextGameState = GAME_STATE_GAME_OVER;
+      }
+      else
+      {
+        uint8_t playerKey = getInput();
 
-        if(currentLevel > MAX_LEVEL )
+        if(playerKey != NO_KEY)
         {
-          Serial.println("Game Over");
-          nextGameState = GAME_STATE_GAME_OVER;
+          Serial.print("Key: ");
+          Serial.println(playerKey);
+
+          if(sequence[currentStep] == playerKey)
+          {
+            doIndicateStep(currentStep);
+            nextGameState = GAME_STATE_CHECK_SEQUENCE_INDICATE;
+          }
+          else
+          {
+            Serial.println("Wrong Key!!!");
+            Serial.print("Excpected: ");
+            Serial.println(sequence[currentStep]);
+            nextGameState = GAME_STATE_GAME_OVER;
+          }
+        }
+      }
+      break;
+    }
+
+    case GAME_STATE_CHECK_SEQUENCE_INDICATE:
+    {
+      if( (millis() - stateEnterTime) > STEP_DURATION )
+      {
+        stepEnd();
+        currentStep++;
+        if(currentStep >= currentLevel)
+        {
+          //All done, now handle player repeating this level
+          currentLevel++;
+          if(currentLevel > MAX_LEVEL )
+          {
+            Serial.println("You won!!");
+            nextGameState = GAME_STATE_GAME_OVER;
+          }
+          else
+          {
+            Serial.println("Level complete!!");
+            nextGameState = GAME_STATE_PLAY_SEQUENCE_INIT;
+          }
         }
         else
         {
-          nextGameState = GAME_STATE_PLAY_SEQUENCE_INIT;
+          //Play next step in this sequence
+          nextGameState = GAME_STATE_CHECK_SEQUENCE;
         }
       }
       break;
@@ -260,6 +344,8 @@ static runGame()
   {
     previousGameState = currentGameState;
     currentGameState = nextGameState;
+    Serial.print("Switched to state ");
+    Serial.println((int)currentGameState);
     stateEnterTime = millis();
   }
 }
@@ -282,23 +368,7 @@ void loop() {
   // digitalWrite(YELLOW_LED_PIN, !digitalRead(YELLOW_BUTTON_PIN));
   // digitalWrite(GREEN_LED_PIN, !digitalRead(GREEN_BUTTON_PIN));
   //
-  // if(!digitalRead(RED_BUTTON_PIN))
-  // {
-  //     tone(SPEAKER_PIN, NOTE_A4, 100);
-  // }
-  // else if(!digitalRead(BLUE_BUTTON_PIN))
-  // {
-  //     tone(SPEAKER_PIN, NOTE_G4, 100);
-  // }
-  // else if(!digitalRead(YELLOW_BUTTON_PIN))
-  // {
-  //     tone(SPEAKER_PIN, NOTE_C4, 100);
-  // }
-  // else if(!digitalRead(GREEN_BUTTON_PIN))
-  // {
-  //     tone(SPEAKER_PIN, NOTE_G5, 100);
-  // }
-
+  //
 
   if(    ButtonMgr::isPressed(RED_BUTTON_IDX)
       || ButtonMgr::isReleased(RED_BUTTON_IDX) )
