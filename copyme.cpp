@@ -1,5 +1,8 @@
 #include <Arduino.h>
 #include "ButtonMgr.h"
+#include "StateMachine.h"
+
+uint8_t mainStateFunc(StateM*);
 
 //Our LEDS
 static const uint8_t RED_LED_PIN = 9;
@@ -48,22 +51,20 @@ static const uint8_t NO_KEY = INDICATE_CNT;
 
 enum GameState
 {
-    GAME_STATE_INVALID,                        //0
-    GAME_STATE_POR,                            //1 - Power on reset
+    GAME_STATE_POR,                           //0 - Power on reset
 
-    GAME_STATE_PLAY_SEQUENCE_INIT,            //2
-    GAME_STATE_PLAY_SEQUENCE_INDICATE_STEP,   //3
-    GAME_STATE_PLAY_SEQUENCE_INDICATE_DELAY,  //4
+    GAME_STATE_PLAY_SEQUENCE_INIT,            //1
+    GAME_STATE_PLAY_SEQUENCE_INDICATE_STEP,   //2
+    GAME_STATE_PLAY_SEQUENCE_INDICATE_DELAY,  //3
 
-    GAME_STATE_CHECK_SEQUENCE_PAUSE,          //5 - Delay before start
-    GAME_STATE_CHECK_SEQUENCE,                //6 - Player plays back sequence
-    GAME_STATE_CHECK_SEQUENCE_INDICATE,       //7
-    GAME_STATE_GAME_OVER                      //8
-};
+    GAME_STATE_CHECK_SEQUENCE_PAUSE,          //4 - Delay before start
+    GAME_STATE_CHECK_SEQUENCE,                //5 - Player plays back sequence
+    GAME_STATE_CHECK_SEQUENCE_INDICATE,       //6
+    GAME_STATE_GAME_OVER                      //7
+  };
 
-static GameState previousGameState;
-static GameState currentGameState;
-static unsigned long stateEnterTime;
+static StateM mainSM;
+
 
 static const uint8_t MAX_LEVEL = 8;
 static uint8_t sequence[MAX_LEVEL];
@@ -96,9 +97,7 @@ void setup()
   buttons[GREEN_BUTTON_IDX].pin = GREEN_BUTTON_PIN;
   ButtonMgr::init(buttons, BUTTON_CNT);
 
-  previousGameState = GAME_STATE_INVALID;
-  currentGameState = GAME_STATE_POR;
-  stateEnterTime = millis();
+  mainSM.init(mainStateFunc);
 
   randomSeed(10);
 }
@@ -199,28 +198,28 @@ static uint8_t getInput()
   return pressed;
 }
 
-static runGame()
+static uint8_t mainStateFunc(StateM* sm)
 {
-  GameState nextGameState = GAME_STATE_INVALID;
+  uint8_t retValue = 0;
 
-  switch(currentGameState)
+  switch(sm->getCurrent())
   {
     case GAME_STATE_POR:
     {
       currentLevel = 1;
       generateSequence();
-      nextGameState = GAME_STATE_PLAY_SEQUENCE_INIT;
+      sm->setNext(GAME_STATE_PLAY_SEQUENCE_INIT);
       break;
     }
 
     case GAME_STATE_PLAY_SEQUENCE_INIT:
     {
-      if((millis() - stateEnterTime) > 2000)
+      if(sm->getDuration() > 2000)
       {
         Serial.print("Level: ");
         Serial.println(currentLevel);
         currentStep = 0;
-        nextGameState = GAME_STATE_PLAY_SEQUENCE_INDICATE_STEP;
+        sm->setNext(GAME_STATE_PLAY_SEQUENCE_INDICATE_STEP);
       }
       break;
     }
@@ -228,25 +227,25 @@ static runGame()
     case GAME_STATE_PLAY_SEQUENCE_INDICATE_STEP:
     {
       doIndicateStep(currentStep);
-      nextGameState = GAME_STATE_PLAY_SEQUENCE_INDICATE_DELAY;
+      sm->setNext(GAME_STATE_PLAY_SEQUENCE_INDICATE_DELAY);
       break;
     }
 
     case GAME_STATE_PLAY_SEQUENCE_INDICATE_DELAY:
     {
-      if( (millis() - stateEnterTime) > STEP_DURATION )
+      if( sm->getDuration() > STEP_DURATION )
       {
         stepEnd();
         currentStep++;
         if(currentStep >= currentLevel)
         {
           //All done, now handle player repeating this level
-          nextGameState = GAME_STATE_CHECK_SEQUENCE_PAUSE;
+          sm->setNext(GAME_STATE_CHECK_SEQUENCE_PAUSE);
         }
         else
         {
           //Play next step in this sequence
-          nextGameState = GAME_STATE_PLAY_SEQUENCE_INDICATE_STEP;
+          sm->setNext(GAME_STATE_PLAY_SEQUENCE_INDICATE_STEP);
         }
       }
       break;
@@ -254,20 +253,20 @@ static runGame()
 
     case GAME_STATE_CHECK_SEQUENCE_PAUSE:
     {
-      if( (millis() - stateEnterTime) > 1000 )
+      if( sm->getDuration() > 1000 )
       {
         currentStep = 0;
-        nextGameState = GAME_STATE_CHECK_SEQUENCE;
+        sm->setNext(GAME_STATE_CHECK_SEQUENCE);
       }
       break;
     }
 
     case GAME_STATE_CHECK_SEQUENCE:
     {
-      if( (millis() - stateEnterTime) > REPEAT_STEP_TO )
+      if( sm->getDuration() > REPEAT_STEP_TO )
       {
         Serial.println("Too slow!!!");
-        nextGameState = GAME_STATE_GAME_OVER;
+        sm->setNext(GAME_STATE_GAME_OVER);
       }
       else
       {
@@ -281,14 +280,14 @@ static runGame()
           if(sequence[currentStep] == playerKey)
           {
             doIndicateStep(currentStep);
-            nextGameState = GAME_STATE_CHECK_SEQUENCE_INDICATE;
+            sm->setNext(GAME_STATE_CHECK_SEQUENCE_INDICATE);
           }
           else
           {
             Serial.println("Wrong Key!!!");
             Serial.print("Excpected: ");
             Serial.println(sequence[currentStep]);
-            nextGameState = GAME_STATE_GAME_OVER;
+            sm->setNext(GAME_STATE_GAME_OVER);
           }
         }
       }
@@ -297,7 +296,7 @@ static runGame()
 
     case GAME_STATE_CHECK_SEQUENCE_INDICATE:
     {
-      if( (millis() - stateEnterTime) > STEP_DURATION )
+      if( sm->getDuration() > STEP_DURATION )
       {
         stepEnd();
         currentStep++;
@@ -308,18 +307,18 @@ static runGame()
           if(currentLevel > MAX_LEVEL )
           {
             Serial.println("You won!!");
-            nextGameState = GAME_STATE_GAME_OVER;
+            sm->setNext(GAME_STATE_GAME_OVER);
           }
           else
           {
             Serial.println("Level complete!!");
-            nextGameState = GAME_STATE_PLAY_SEQUENCE_INIT;
+            sm->setNext(GAME_STATE_PLAY_SEQUENCE_INIT);
           }
         }
         else
         {
           //Play next step in this sequence
-          nextGameState = GAME_STATE_CHECK_SEQUENCE;
+          sm->setNext(GAME_STATE_CHECK_SEQUENCE);
         }
       }
       break;
@@ -330,24 +329,15 @@ static runGame()
       break;
     }
 
-    case GAME_STATE_INVALID:
+    case StateM::STATE_INVALID:
     default:
     {
+      sm->setNext(GAME_STATE_POR);
       break;
     }
-
   }
 
-  previousGameState = currentGameState;
-
-  if( GAME_STATE_INVALID != nextGameState )
-  {
-    previousGameState = currentGameState;
-    currentGameState = nextGameState;
-    Serial.print("Switched to state ");
-    Serial.println((int)currentGameState);
-    stateEnterTime = millis();
-  }
+  return retValue;
 }
 
 
@@ -355,7 +345,7 @@ static runGame()
 void loop() {
   ButtonMgr::update();
 
-  runGame();
+  mainSM.run();
   // Serial.println("And ON");
   // digitalWrite(13, HIGH);   // turn the LED on (HIGH is the voltage level)
   // delay(5000);              // wait for a second
